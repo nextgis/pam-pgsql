@@ -37,6 +37,9 @@
 #include <security/pam_appl.h>
 #include "pam_pgsql_options.h"
 
+//for log messages
+#include "pam_pgsql.h"
+
 #ifdef __FreeBSD__
 #include <sys/param.h>
 #endif
@@ -53,7 +56,7 @@ pam_conv_pass(pam_handle_t *pamh, int pam_item, const char *prompt, int options)
 
     if ((retval = pam_get_item(pamh, PAM_CONV, &item)) !=
         PAM_SUCCESS)
-        return retval;
+        return retval;    
     conv = (const struct pam_conv *)item;
     msg.msg_style = options & PAM_OPT_ECHO_PASS ?
         PAM_PROMPT_ECHO_ON : PAM_PROMPT_ECHO_OFF;
@@ -61,7 +64,7 @@ pam_conv_pass(pam_handle_t *pamh, int pam_item, const char *prompt, int options)
     msgs[0] = &msg;  
     if ((retval = conv->conv(1, msgs, &resp, conv->appdata_ptr)) !=
         PAM_SUCCESS)
-        return retval;
+        return retval;    
     if ((retval = pam_set_item(pamh, pam_item, resp[0].resp)) !=
         PAM_SUCCESS)
         return retval;
@@ -83,21 +86,22 @@ pam_get_pass(pam_handle_t *pamh, int pam_item, const char **passp, const char *p
      */
     if ((pam_item == PAM_AUTHTOK) && (options & (PAM_OPT_TRY_FIRST_PASS | PAM_OPT_USE_FIRST_PASS)))  {
         if ((retval = pam_get_item(pamh, pam_item, &item)) !=
-            PAM_SUCCESS)  
+            PAM_SUCCESS) 
             return retval;
     }
 
     if (item == NULL) {
         /* The user hasn't entered a password yet. */
-        if ((pam_item == PAM_AUTHTOK) && (options & PAM_OPT_USE_FIRST_PASS)) 
+        if ((pam_item == PAM_AUTHTOK) && (options & PAM_OPT_USE_FIRST_PASS))
             return PAM_AUTH_ERR;
         /* Use the conversation function to get a password. */
         if ((retval = pam_conv_pass(pamh, pam_item, prompt, options)) !=
             PAM_SUCCESS ||
             (retval = pam_get_item(pamh, pam_item, &item)) !=
-            PAM_SUCCESS)  
+            PAM_SUCCESS)
             return retval;
     }
+    
     *passp = (const char *)item;
     return PAM_SUCCESS;
 }  

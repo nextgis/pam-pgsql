@@ -217,7 +217,8 @@ pg_execParam(PGconn *conn, PGresult **res,
 	free (command);
 	free (raddr);
     
-	if(PQresultStatus(*res) != PGRES_COMMAND_OK && PQresultStatus(*res) != PGRES_TUPLES_OK) {
+    ExecStatusType retType = PQresultStatus(*res);
+	if(retType != PGRES_COMMAND_OK && retType != PGRES_TUPLES_OK) {
 		SYSLOG("PostgreSQL query failed: '%s'", PQresultErrorMessage(*res));
 		return PAM_AUTHINFO_UNAVAIL;
 	}
@@ -251,21 +252,23 @@ backend_authenticate(const char *service, const char *user, const char *passwd, 
 	char *tmp;
 
 	if(!(conn = db_connect(options)))
+	{
+	    DBGLOG("connect failed");
 		return PAM_AUTH_ERR;
+    }
 
 	DBGLOG("query: %s", options->query_auth);
 	rc = PAM_AUTH_ERR;	
 	if(pg_execParam(conn, &res, options->query_auth, service, user, passwd, rhost) == PAM_SUCCESS) {
 		if(PQntuples(res) == 0) {
+		    DBGLOG("user %s unknown", user);
 			rc = PAM_USER_UNKNOWN;
 		} else if (!PQgetisnull(res, 0, 0)) {
 			char *stored_pw = PQgetvalue(res, 0, 0);
-			if (options->pw_type == PW_FUNCTION) {
-				if (!strcmp(stored_pw, "t")) { rc = PAM_SUCCESS; }
-			} else {
-				if (!strcmp(stored_pw, (tmp = password_encrypt(options, user, passwd, stored_pw)))) rc = PAM_SUCCESS;
-				free (tmp);
-			}
+			tmp = password_encrypt(options, user, passwd, stored_pw);
+			//DEBUG: DBGLOG("check pass: %s %s", stored_pw, tmp);
+			if (!strcmp(stored_pw, tmp)) rc = PAM_SUCCESS;
+			free (tmp);
 		}
 		PQclear(res);
 	}
@@ -278,11 +281,23 @@ char *
 password_encrypt(modopt_t *options, const char *user, const char *pass, const char *salt)
 {
 	char *s = NULL;
+	
+	if (!gcry_check_version (GCRYPT_VERSION))
+    {
+      SYSLOG("libgcrypt version mismatch: '%s'", GCRYPT_VERSION);
+      return s;
+    }
+    
+    /* NOT SECURED!*/
+    /* Disable secure memory.  */
+    gcry_control (GCRYCTL_DISABLE_SECMEM, 0);
+
+    /* Tell Libgcrypt that initialization has completed. */
+    gcry_control (GCRYCTL_INITIALIZATION_FINISHED, 0);
 
 	switch(options->pw_type) {
 		case PW_CRYPT:
 		case PW_CRYPT_MD5:
-		case PW_CRYPT_SHA512: 
 			if (salt==NULL) {
 				s = strdup(crypt(pass, crypt_makesalt(options->pw_type)));
 			} else {
@@ -337,9 +352,12 @@ password_encrypt(modopt_t *options, const char *user, const char *pass, const ch
 		}
 		break;
 		case PW_CLEAR:
-		case PW_FUNCTION:
 		default:
 			s = strdup(pass);
+	}
+	if (!gcry_control (GCRYCTL_INITIALIZATION_FINISHED_P))
+	{
+	    SYSLOG("libgcrypt has not been finished");
 	}
 	return s;
 }
@@ -354,10 +372,6 @@ crypt_makesalt(pw_scheme scheme)
 	if(scheme==PW_CRYPT){
 		len=2;
 		pos=0;
-	} else if(scheme==PW_CRYPT_SHA512) { /* PW_CRYPT_SHA512 */
-		strcpy (result, "$6$");
-		len = 11;
-		pos = 3;
 	} else { /* PW_CRYPT_MD5 */
 		strcpy(result,"$1$");
 		len=11;
